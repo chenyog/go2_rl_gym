@@ -153,6 +153,8 @@ if __name__ == "__main__":
         dof_pos_scale = config["dof_pos_scale"]
         dof_vel_scale = config["dof_vel_scale"]
         action_scale = config["action_scale"]
+        clip_observations = config["clip_observations"]
+        clip_actions = config["clip_actions"]
         cmd_scale = np.array(config["cmd_scale"], dtype=np.float32)
 
         num_actions = config["num_actions"]
@@ -255,9 +257,10 @@ if __name__ == "__main__":
                 obs[9 : 9 + num_actions] = qj[idx_mj2model]
                 obs[9 + num_actions : 9 + 2 * num_actions] = dqj[idx_mj2model]
                 obs[9 + 2 * num_actions : 9 + 3 * num_actions] = action[idx_mj2model]
+                obs = np.clip(obs, -clip_observations, clip_observations)
 
                 action_result, aux = policy(obs)
-                action = action_result[idx_model2mj]
+                action = np.clip(action_result, -clip_actions, clip_actions)[idx_model2mj]
                 if aux:
                     weights = np.asarray(aux[0]).squeeze()
                     latent = np.asarray(aux[-1]).squeeze() if len(aux) > 1 else None

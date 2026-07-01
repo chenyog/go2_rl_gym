@@ -20,9 +20,10 @@ void signal_handler(int) {
 
 void print_usage(const char* argv0) {
     std::cout << "Usage: " << argv0 << " [--config path] [--connection low_wifi|low_wired] "
-              << "[--cmd vx vy yaw] [--dry-run] [--print-state] [--print-remote]\n";
-    std::cout << "Runtime keys: s=stand, r=run policy, 1/2/3/4=up/down/left/right policy, "
-              << "p=passive damping, q=quit damping, h=help\n";
+              << "[--dry-run] [--print-state]\n";
+    std::cout << "Runtime keys: S=stand, r=run policy, 1/2/3/4=up/down/left/right policy, "
+              << "p=passive damping, Q=quit damping, h=help\n";
+    std::cout << "Keyboard cmd source: w/s or up/down=vx, a/d or left/right=vy, q/e=yaw, space=zero\n";
     std::cout << "Remote: L2+A=stand, L2+B=passive, select=quit, start+dpad=switch/run policy\n";
 }
 } // namespace
@@ -37,14 +38,10 @@ int main(int argc, char** argv) {
             config_path = argv[++i];
         } else if (arg == "--connection" && i + 1 < argc) {
             options.connection_override = argv[++i];
-        } else if (arg == "--cmd" && i + 3 < argc) {
-            options.command = {std::stof(argv[++i]), std::stof(argv[++i]), std::stof(argv[++i])};
         } else if (arg == "--dry-run") {
             options.dry_run = true;
         } else if (arg == "--print-state") {
             options.print_state = true;
-        } else if (arg == "--print-remote") {
-            options.print_remote = true;
         } else if (arg == "--help" || arg == "-h") {
             print_usage(argv[0]);
             return 0;

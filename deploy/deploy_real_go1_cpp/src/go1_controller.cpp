@@ -31,6 +31,7 @@ constexpr int kUp = 12;
 constexpr int kRight = 13;
 constexpr int kDown = 14;
 constexpr int kLeft = 15;
+constexpr double kDebugPrintDt = 0.1;
 
 class NonBlockingKeyboard {
 public:
@@ -71,10 +72,20 @@ public:
             return '\0';
         }
         char key = '\0';
-        const auto nread = ::read(STDIN_FILENO, &key, 1);
-        if (nread == 1) {
+        if (::read(STDIN_FILENO, &key, 1) != 1) {
+            return '\0';
+        }
+        if (key != '\033') {
             return key;
         }
+        char seq[2]{};
+        if (::read(STDIN_FILENO, seq, 2) != 2 || seq[0] != '[') {
+            return '\0';
+        }
+        if (seq[1] == 'A') return 'I';
+        if (seq[1] == 'B') return 'K';
+        if (seq[1] == 'C') return 'L';
+        if (seq[1] == 'D') return 'J';
         return '\0';
     }
 
@@ -169,10 +180,29 @@ DeployConfig load_config(const std::filesystem::path& config_path) {
     if (!cfg.policies.count(cfg.initial_policy)) {
         throw std::runtime_error("initial_policy is not listed in policies: " + cfg.initial_policy);
     }
+    cfg.policy_provider = yaml["policy_provider"] ? yaml["policy_provider"].as<std::string>() : cfg.policy_provider;
+    cfg.cuda_device_id = yaml["cuda_device_id"] ? yaml["cuda_device_id"].as<int>() : cfg.cuda_device_id;
+    if (cfg.policy_provider != "cpu" && cfg.policy_provider != "cuda") {
+        throw std::runtime_error("policy_provider must be either 'cpu' or 'cuda'");
+    }
     cfg.fsm_dt = yaml["fsm_dt"] ? yaml["fsm_dt"].as<double>() : cfg.fsm_dt;
     cfg.control_dt = yaml["control_dt"].as<double>();
     cfg.sdk_mode = yaml["sdk_mode"].as<std::string>();
     cfg.connection = yaml["connection"].as<std::string>();
+    if (yaml["connections"]) {
+        if (!yaml["connections"].IsMap()) {
+            throw std::runtime_error("connections must be a map");
+        }
+        for (const auto& item : yaml["connections"]) {
+            const auto node = item.second;
+            cfg.connections[item.first.as<std::string>()] = {
+                node["robot_ip"].as<std::string>(),
+                node["local_ip"].as<std::string>(),
+                node["listen_port"].as<int>(),
+                node["send_port"].as<int>(),
+            };
+        }
+    }
     cfg.joint2motor_idx = read_array<int, 12>(yaml, "joint2motor_idx");
     cfg.default_angles = read_array<float, 12>(yaml, "default_angles");
     cfg.kps = read_array<float, 12>(yaml, "kps");
@@ -184,18 +214,26 @@ DeployConfig load_config(const std::filesystem::path& config_path) {
     cfg.obs_scales_dof_vel = yaml["obs_scales_dof_vel"].as<float>();
     cfg.command_scale = read_array<float, 3>(yaml, "command_scale");
     cfg.action_scale = yaml["action_scale"].as<float>();
+    cfg.clip_observations = yaml["clip_observations"] ? yaml["clip_observations"].as<float>() : cfg.clip_observations;
+    cfg.clip_actions = yaml["clip_actions"] ? yaml["clip_actions"].as<float>() : cfg.clip_actions;
     cfg.num_obs = yaml["num_obs"].as<int>();
     cfg.num_actions = yaml["num_actions"].as<int>();
     cfg.state_timeout_s = yaml["state_timeout_s"].as<double>();
     cfg.move_to_default_s = yaml["move_to_default_s"].as<double>();
     cfg.remote_enabled = yaml["remote_enabled"] ? yaml["remote_enabled"].as<bool>() : cfg.remote_enabled;
-    cfg.remote_cmd_enabled = yaml["remote_cmd_enabled"] ? yaml["remote_cmd_enabled"].as<bool>() : cfg.remote_cmd_enabled;
     cfg.remote_deadzone = yaml["remote_deadzone"] ? yaml["remote_deadzone"].as<float>() : cfg.remote_deadzone;
+    cfg.command_source = yaml["command_source"] ? yaml["command_source"].as<std::string>() : cfg.command_source;
+    if (cfg.command_source != "remote" && cfg.command_source != "keyboard") {
+        throw std::runtime_error("command_source must be either 'remote' or 'keyboard'");
+    }
+    if (cfg.command_source == "remote" && !cfg.remote_enabled) {
+        throw std::runtime_error("command_source is 'remote' but remote_enabled is false");
+    }
     return cfg;
 }
 
 Go1Controller::Go1Controller(DeployConfig config, RuntimeOptions options)
-    : config_(std::move(config)), options_(std::move(options)), command_(options_.command) {
+    : config_(std::move(config)), options_(std::move(options)) {
     load_policies();
     switch_policy(config_.initial_policy);
 }
@@ -228,20 +266,26 @@ void Go1Controller::validate_timing() const {
 
 void Go1Controller::print_keyboard_help() const {
     std::cout << "\nGo1 deploy keyboard controls:\n"
-              << "  s: move to default stand\n"
+              << "  s: move to default stand (remote command source); vx -1 (keyboard command source)\n"
               << "  r: run policy from default stand\n"
               << "  1/2/3/4: switch policy up/down/left/right\n"
               << "  p: passive damping\n"
-              << "  q: damping and quit\n"
+              << "  q: damping and quit (remote command source); yaw +1 (keyboard command source)\n"
+              << "  S: move to default stand, Q: damping and quit\n"
+              << "  w/s or up/down: vx +1/-1\n"
+              << "  a/d or left/right: vy +1/-1\n"
+              << "  q/e: yaw +1/-1\n"
+              << "  space: zero keyboard velocity command\n"
               << "  h: print this help\n"
               << "Remote: L2+A=stand, L2+B=passive, select=quit, start+dpad=switch/run policy\n"
+              << "Command source: " << config_.command_source << "\n"
               << "Current state: " << state_name(state_) << ", policy=" << active_policy_name_ << "\n\n";
 }
 
 void Go1Controller::load_policies() {
     for (const auto* name : kPolicyNames) {
         const auto& path = config_.policies.at(name);
-        policies_[name] = std::make_unique<OnnxPolicy>(path, config_.num_obs, config_.num_actions);
+        policies_[name] = std::make_unique<OnnxPolicy>(path, config_.num_obs, config_.num_actions, config_.policy_provider, config_.cuda_device_id);
         std::vector<float> obs(static_cast<std::size_t>(config_.num_obs), 0.0f);
         auto action = policies_[name]->run(obs);
         if (action.size() != 12) {
@@ -262,7 +306,7 @@ void Go1Controller::switch_policy(const std::string& name) {
     auto q = current_joint_positions();
     for (int i = 0; i < 12; ++i) {
         const auto idx = static_cast<std::size_t>(i);
-        last_action_[idx] = clamp((q[idx] - config_.default_angles[idx]) / config_.action_scale, -1.0f, 1.0f);
+        last_action_[idx] = clamp((q[idx] - config_.default_angles[idx]) / config_.action_scale, -config_.clip_actions, config_.clip_actions);
         policy_target_q_[idx] = clamp(config_.default_angles[idx] + last_action_[idx] * config_.action_scale, joint_lower_limits()[idx], joint_upper_limits()[idx]);
     }
     std::cout << "Active policy: " << active_policy_name_ << "\n";
@@ -270,13 +314,22 @@ void Go1Controller::switch_policy(const std::string& name) {
 
 ucl::ConnectionSettings Go1Controller::connection_settings() const {
     const std::string selected = options_.connection_override.empty() ? config_.connection : options_.connection_override;
+    ucl::ConnectionSettings settings;
     if (selected == "low_wifi") {
-        return ucl::LOW_WIFI_DEFAULTS;
+        settings = ucl::LOW_WIFI_DEFAULTS;
+    } else if (selected == "low_wired") {
+        settings = ucl::LOW_WIRED_DEFAULTS;
+    } else {
+        throw std::runtime_error("Unsupported Go1 connection: " + selected);
     }
-    if (selected == "low_wired") {
-        return ucl::LOW_WIRED_DEFAULTS;
+    const auto it = config_.connections.find(selected);
+    if (it != config_.connections.end()) {
+        settings.addr = it->second.robot_ip;
+        settings.localIP = it->second.local_ip;
+        settings.listenPort = it->second.listen_port;
+        settings.sendPort = it->second.send_port;
     }
-    throw std::runtime_error("Unsupported Go1 connection: " + selected);
+    return settings;
 }
 
 bool Go1Controller::receive_latest_state() {
@@ -285,6 +338,7 @@ bool Go1Controller::receive_latest_state() {
     for (const auto& packet : packets) {
         if (low_state_.parseData(packet)) {
             got_state = true;
+            ++received_state_packets_total_;
             last_state_time_ = std::chrono::steady_clock::now();
         }
     }
@@ -306,6 +360,7 @@ bool Go1Controller::wait_for_low_state() {
 void Go1Controller::send_cmd() {
     if (conn_) {
         conn_->send(low_cmd_.buildCmd(false));
+        ++sent_cmd_packets_total_;
     }
 }
 
@@ -364,6 +419,36 @@ std::vector<float> Go1Controller::build_observation() const {
 void Go1Controller::handle_keyboard(char key) {
     if (key == '\0') {
         return;
+    }
+    if (config_.command_source == "keyboard") {
+        if (key == 'w' || key == 'W' || key == 'I') {
+            keyboard_command_ = {1.0f, 0.0f, 0.0f};
+            return;
+        }
+        if (key == 's' || key == 'K') {
+            keyboard_command_ = {-1.0f, 0.0f, 0.0f};
+            return;
+        }
+        if (key == 'a' || key == 'A' || key == 'J') {
+            keyboard_command_ = {0.0f, 1.0f, 0.0f};
+            return;
+        }
+        if (key == 'd' || key == 'D' || key == 'L') {
+            keyboard_command_ = {0.0f, -1.0f, 0.0f};
+            return;
+        }
+        if (key == 'q') {
+            keyboard_command_ = {0.0f, 0.0f, 1.0f};
+            return;
+        }
+        if (key == 'e' || key == 'E') {
+            keyboard_command_ = {0.0f, 0.0f, -1.0f};
+            return;
+        }
+        if (key == ' ') {
+            keyboard_command_ = {0.0f, 0.0f, 0.0f};
+            return;
+        }
     }
     if (key >= '1' && key <= '4') {
         switch_policy(kPolicyNames[static_cast<std::size_t>(key - '1')]);
@@ -510,12 +595,18 @@ void Go1Controller::tick_default_stand() {
 }
 
 void Go1Controller::run_policy_once() {
-    if (config_.remote_enabled && config_.remote_cmd_enabled) {
+    if (config_.command_source == "keyboard") {
+        command_ = keyboard_command_;
+    } else if (config_.command_source == "remote") {
         command_ = {dz(remote_.ly, config_.remote_deadzone), dz(-remote_.lx, config_.remote_deadzone), dz(-remote_.rx, config_.remote_deadzone)};
     }
     const auto lower = joint_lower_limits();
     const auto upper = joint_upper_limits();
-    auto action = active_policy_->run(build_observation());
+    auto obs = build_observation();
+    for (auto& value : obs) {
+        value = clamp(value, -config_.clip_observations, config_.clip_observations);
+    }
+    auto action = active_policy_->run(obs);
     if (action.size() != 12) {
         std::cerr << "Policy action is not 12-dimensional. Entering damping.\n";
         transition_to(ControllerState::ExitDamping);
@@ -523,9 +614,10 @@ void Go1Controller::run_policy_once() {
     }
     for (int i = 0; i < 12; ++i) {
         const auto idx = static_cast<std::size_t>(i);
-        last_action_[idx] = clamp(action[idx], -1.0f, 1.0f);
+        last_action_[idx] = clamp(action[idx], -config_.clip_actions, config_.clip_actions);
         policy_target_q_[idx] = clamp(config_.default_angles[idx] + last_action_[idx] * config_.action_scale, lower[idx], upper[idx]);
     }
+    ++policy_runs_total_;
 }
 
 void Go1Controller::tick_policy_run() {
@@ -557,23 +649,66 @@ void Go1Controller::tick_exit_damping() {
     }
 }
 
-void Go1Controller::print_current_state() const {
+void Go1Controller::print_current_state() {
     auto rpy = rpy_from_quat(low_state_.imuData.quaternion);
-    std::cout << "rpy=(" << rpy[0] << ", " << rpy[1] << ", " << rpy[2] << ") "
-              << "gyro=(" << low_state_.imuData.gyroscope[0] << ", " << low_state_.imuData.gyroscope[1] << ", " << low_state_.imuData.gyroscope[2] << ")\n";
-}
-
-void Go1Controller::print_remote_bytes() const {
-    std::cout << "remote:";
-    for (auto byte : low_state_.wirelessRemote) {
-        std::cout << " " << static_cast<int>(byte);
+    auto gravity = gravity_orientation(low_state_.imuData.quaternion);
+    const auto now = std::chrono::steady_clock::now();
+    const double dt = std::chrono::duration<double>(now - last_debug_stats_time_).count();
+    double state_hz = 0.0;
+    double cmd_hz = 0.0;
+    double policy_hz = 0.0;
+    if (dt > 0.0) {
+        state_hz = static_cast<double>(received_state_packets_total_ - last_debug_state_packets_) / dt;
+        cmd_hz = static_cast<double>(sent_cmd_packets_total_ - last_debug_cmd_packets_) / dt;
+        policy_hz = static_cast<double>(policy_runs_total_ - last_debug_policy_runs_) / dt;
     }
-    std::cout << " | buttons:";
+    last_debug_stats_time_ = now;
+    last_debug_state_packets_ = received_state_packets_total_;
+    last_debug_cmd_packets_ = sent_cmd_packets_total_;
+    last_debug_policy_runs_ = policy_runs_total_;
+
+    std::cout << "----- go1_deploy debug -----\n"
+              << "state: " << state_name(state_) << "  policy: " << active_policy_name_
+              << "  source: " << config_.command_source
+              << "  clip_obs: " << config_.clip_observations
+              << "  clip_actions: " << config_.clip_actions << "\n"
+              << "freq_hz: lowState=" << state_hz << "  lowCmd=" << cmd_hz << "  policy=" << policy_hz << "\n"
+              << "cmd: vx=" << command_[0] << "  vy=" << command_[1] << "  yaw=" << command_[2] << "\n"
+              << "remote_axes: lx=" << remote_.lx << "  ly=" << remote_.ly
+              << "  rx=" << remote_.rx << "  ry=" << remote_.ry << "\n"
+              << "remote_buttons: ";
     for (auto button : remote_.buttons) {
         std::cout << button;
     }
-    std::cout << " axes=(" << remote_.lx << ", " << remote_.ly << ", " << remote_.rx << ", " << remote_.ry << ")"
-              << " cmd=(" << command_[0] << ", " << command_[1] << ", " << command_[2] << ")\n";
+    std::cout << "\n"
+              << "rpy: roll=" << rpy[0] << "  pitch=" << rpy[1] << "  yaw=" << rpy[2] << "\n"
+              << "gravity: x=" << gravity[0] << "  y=" << gravity[1] << "  z=" << gravity[2] << "\n"
+              << "gyro: x=" << low_state_.imuData.gyroscope[0]
+              << "  y=" << low_state_.imuData.gyroscope[1]
+              << "  z=" << low_state_.imuData.gyroscope[2] << "\n";
+    if (state_ == ControllerState::PolicyRun) {
+        std::cout << "action_hip:   FL=" << last_action_[0]
+                  << "  FR=" << last_action_[3]
+                  << "  RL=" << last_action_[6]
+                  << "  RR=" << last_action_[9] << "\n"
+                  << "action_thigh: FL=" << last_action_[1]
+                  << "  FR=" << last_action_[4]
+                  << "  RL=" << last_action_[7]
+                  << "  RR=" << last_action_[10] << "\n"
+                  << "action_calf:  FL=" << last_action_[2]
+                  << "  FR=" << last_action_[5]
+                  << "  RL=" << last_action_[8]
+                  << "  RR=" << last_action_[11] << "\n"
+                  << "target_thigh: FL=" << policy_target_q_[1]
+                  << "  FR=" << policy_target_q_[4]
+                  << "  RL=" << policy_target_q_[7]
+                  << "  RR=" << policy_target_q_[10] << "\n"
+                  << "target_calf:  FL=" << policy_target_q_[2]
+                  << "  FR=" << policy_target_q_[5]
+                  << "  RL=" << policy_target_q_[8]
+                  << "  RR=" << policy_target_q_[11] << "\n";
+    }
+    std::cout.flush();
 }
 
 void Go1Controller::dry_run() {
@@ -582,6 +717,9 @@ void Go1Controller::dry_run() {
     std::vector<float> action;
     for (auto& item : policies_) {
         item.second->reset();
+        for (auto& value : obs) {
+            value = clamp(value, -config_.clip_observations, config_.clip_observations);
+        }
         action = item.second->run(obs);
         if (action.size() != 12) {
             throw std::runtime_error("Dry run policy slot " + item.first + " action is not 12-dimensional.");
@@ -590,7 +728,7 @@ void Go1Controller::dry_run() {
     std::array<float, 12> target_q{};
     for (int i = 0; i < 12; ++i) {
         const auto idx = static_cast<std::size_t>(i);
-        target_q[idx] = config_.default_angles[idx] + clamp(action[idx], -1.0f, 1.0f) * config_.action_scale;
+        target_q[idx] = config_.default_angles[idx] + clamp(action[idx], -config_.clip_actions, config_.clip_actions) * config_.action_scale;
     }
     fill_servo_cmd(target_q, config_.kps, config_.kds);
     auto bytes = low_cmd_.buildCmd(false);
@@ -619,6 +757,7 @@ void Go1Controller::run() {
     state_ = ControllerState::Passive;
     state_enter_time_ = std::chrono::steady_clock::now();
     next_debug_print_time_ = state_enter_time_;
+    last_debug_stats_time_ = state_enter_time_;
     print_keyboard_help();
 
     auto next_tick = std::chrono::steady_clock::now();
@@ -637,15 +776,10 @@ void Go1Controller::run() {
         handle_remote();
         handle_keyboard(keyboard.poll());
 
-        if ((options_.print_state || options_.print_remote) && now >= next_debug_print_time_) {
-            if (options_.print_state) {
-                print_current_state();
-            }
-            if (options_.print_remote) {
-                print_remote_bytes();
-            }
+        if (options_.print_state && now >= next_debug_print_time_) {
+            print_current_state();
             next_debug_print_time_ =
-                now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(config_.control_dt));
+                now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(kDebugPrintDt));
         }
 
         switch (state_) {

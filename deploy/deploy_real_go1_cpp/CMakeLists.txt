@@ -4,13 +4,13 @@ project(go1_deploy LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(ONNXRUNTIME_ROOT "/home/chenyog/data/unitree_rl_mjlab/deploy/thirdparty/onnxruntime-linux-x64-1.22.0" CACHE PATH "ONNX Runtime root directory")
+set(ONNXRUNTIME_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime-linux-x64-1.10.0" CACHE PATH "ONNX Runtime root directory")
 
 find_package(Threads REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
 find_library(ONNXRUNTIME_LIB
-  NAMES onnxruntime libonnxruntime.so.1.22.0
+  NAMES onnxruntime libonnxruntime.so.1.10.0 libonnxruntime.so.1.22.0
   PATHS "${ONNXRUNTIME_ROOT}/lib"
   NO_DEFAULT_PATH
 )
@@ -25,8 +25,16 @@ add_executable(go1_deploy
   src/onnx_policy.cpp
 )
 
+add_executable(go1_benchmark_onnx_latency
+  scripts/benchmark_onnx_latency.cpp
+)
+
 target_include_directories(go1_deploy PRIVATE
   include
+  "${ONNXRUNTIME_ROOT}/include"
+)
+
+target_include_directories(go1_benchmark_onnx_latency PRIVATE
   "${ONNXRUNTIME_ROOT}/include"
 )
 
@@ -36,6 +44,15 @@ target_link_libraries(go1_deploy PRIVATE
   "${ONNXRUNTIME_LIB}"
 )
 
+target_link_libraries(go1_benchmark_onnx_latency PRIVATE
+  yaml-cpp
+  "${ONNXRUNTIME_LIB}"
+)
+
 set_target_properties(go1_deploy PROPERTIES
+  BUILD_RPATH "${ONNXRUNTIME_ROOT}/lib"
+)
+
+set_target_properties(go1_benchmark_onnx_latency PROPERTIES
   BUILD_RPATH "${ONNXRUNTIME_ROOT}/lib"
 )

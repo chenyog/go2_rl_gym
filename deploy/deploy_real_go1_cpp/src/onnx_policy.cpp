@@ -9,9 +9,48 @@
 namespace go1_deploy {
 namespace {
 constexpr std::array<int, 6> kObsTermDims = {3, 3, 3, 12, 12, 12};
+
+std::size_t tensor_count_with_batch_one(const std::vector<int64_t>& shape) {
+    std::size_t count = 1;
+    for (std::size_t i = 0; i < shape.size(); ++i) {
+        int64_t dim = shape[i];
+        if (dim <= 0) {
+            dim = i == 0 ? 1 : dim;
+        }
+        if (dim <= 0) {
+            throw std::runtime_error("ONNX tensor has a dynamic non-batch dimension.");
+        }
+        count *= static_cast<std::size_t>(dim);
+    }
+    return count;
 }
 
-OnnxPolicy::OnnxPolicy(const std::filesystem::path& path, int num_obs, int num_actions)
+std::string session_input_name(Ort::Session& session, std::size_t index, Ort::AllocatorWithDefaultOptions& allocator) {
+#if ORT_API_VERSION >= 13
+    auto name = session.GetInputNameAllocated(index, allocator);
+    return name.get();
+#else
+    char* name = session.GetInputName(index, allocator);
+    std::string out = name;
+    allocator.Free(name);
+    return out;
+#endif
+}
+
+std::string session_output_name(Ort::Session& session, std::size_t index, Ort::AllocatorWithDefaultOptions& allocator) {
+#if ORT_API_VERSION >= 13
+    auto name = session.GetOutputNameAllocated(index, allocator);
+    return name.get();
+#else
+    char* name = session.GetOutputName(index, allocator);
+    std::string out = name;
+    allocator.Free(name);
+    return out;
+#endif
+}
+}
+
+OnnxPolicy::OnnxPolicy(const std::filesystem::path& path, int num_obs, int num_actions, const std::string& provider, int cuda_device_id)
     : env_(ORT_LOGGING_LEVEL_WARNING, "go1_policy"),
       session_(nullptr),
       num_obs_(num_obs),
@@ -24,16 +63,22 @@ OnnxPolicy::OnnxPolicy(const std::filesystem::path& path, int num_obs, int num_a
 
     session_options_.SetIntraOpNumThreads(1);
     session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);
+    if (provider == "cuda") {
+        OrtCUDAProviderOptions cuda{};
+        cuda.device_id = cuda_device_id;
+        session_options_.AppendExecutionProvider_CUDA(cuda);
+    } else if (provider != "cpu") {
+        throw std::runtime_error("Unknown ONNX policy provider: " + provider);
+    }
     session_ = Ort::Session(env_, path.c_str(), session_options_);
 
-    auto input_name = session_.GetInputNameAllocated(0, allocator_);
-    input_name_ = input_name.get();
-    auto output_name = session_.GetOutputNameAllocated(0, allocator_);
-    output_name_ = output_name.get();
+    input_name_ = session_input_name(session_, 0, allocator_);
+    output_name_ = session_output_name(session_, 0, allocator_);
     input_names_ = {input_name_.c_str()};
     output_names_ = {output_name_.c_str()};
 
-    auto input_info = session_.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo();
+    auto input_type_info = session_.GetInputTypeInfo(0);
+    auto input_info = input_type_info.GetTensorTypeAndShapeInfo();
     auto input_shape = input_info.GetShape();
     if (input_shape.size() != 2) {
         throw std::runtime_error("Expected ONNX input rank 2.");
@@ -94,7 +139,8 @@ std::vector<float> OnnxPolicy::run(const std::vector<float>& obs) {
         throw std::runtime_error("ONNX policy did not return a tensor action output.");
     }
     auto output_info = outputs[0].GetTensorTypeAndShapeInfo();
-    std::size_t output_count = output_info.GetElementCount();
+    const auto output_shape = output_info.GetShape();
+    std::size_t output_count = tensor_count_with_batch_one(output_shape);
     if (output_count != static_cast<std::size_t>(num_actions_)) {
         throw std::runtime_error("ONNX action output is not 12-dimensional.");
     }

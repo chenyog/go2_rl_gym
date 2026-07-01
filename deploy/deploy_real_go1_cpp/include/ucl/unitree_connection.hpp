@@ -6,9 +6,11 @@
 #include <unistd.h>
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -96,17 +98,30 @@ private:
         }
     }
 
-    bool initSocket() {
+    void initSocket() {
         sock_ = socket(AF_INET, SOCK_DGRAM, 0);
         if (sock_ < 0) {
-            return false;
+            throw std::runtime_error("socket failed: " + std::string(std::strerror(errno)));
+        }
+
+        int reuse = 1;
+        setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+        sockaddr_in local;
+        std::memset(&local, 0, sizeof(local));
+        local.sin_family = AF_INET;
+        local.sin_port = htons(settings_.listenPort);
+        if (inet_pton(AF_INET, settings_.localIP.c_str(), &local.sin_addr) != 1) {
+            throw std::runtime_error("Invalid local IP: " + settings_.localIP);
+        }
+        if (bind(sock_, reinterpret_cast<sockaddr*>(&local), sizeof(local)) < 0) {
+            throw std::runtime_error("bind " + settings_.localIP + ":" + std::to_string(settings_.listenPort) + " failed: " + std::string(std::strerror(errno)));
         }
 
         timeval timeout;
         timeout.tv_sec = 1;
         timeout.tv_usec = 0;
         setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-        return true;
     }
 
     ConnectionSettings settings_;

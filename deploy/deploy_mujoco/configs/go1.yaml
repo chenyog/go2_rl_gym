@@ -1,5 +1,8 @@
-policy_path: "{LEGGED_GYM_ROOT_DIR}/deploy/pre_train/go1/go1_policy.onnx"
+policy_path: "{LEGGED_GYM_ROOT_DIR}/logs/go1_moe_cts/exported/policies/policy.onnx"
 xml_path: "{LEGGED_GYM_ROOT_DIR}/resources/robots/go1/flat.xml"
+# xml_path: "{LEGGED_GYM_ROOT_DIR}/resources/robots/go1/race_track.xml"
+# xml_path: "{LEGGED_GYM_ROOT_DIR}/resources/robots/go1/stairs.xml"
+# xml_path: "{LEGGED_GYM_ROOT_DIR}/resources/robots/go1/cross_slope.xml"
 
 simulation_duration: 60000000.0
 simulation_dt: 0.002
@@ -18,6 +21,8 @@ ang_vel_scale: 0.25
 dof_pos_scale: 1.0
 dof_vel_scale: 0.05
 action_scale: 0.25
+clip_observations: 100.0
+clip_actions: 100.0
 cmd_scale: [2.0, 2.0, 0.25]
 num_actions: 12
 num_obs: 45

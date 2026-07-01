@@ -11,7 +11,7 @@ namespace go1_deploy {
 
 class OnnxPolicy {
 public:
-    OnnxPolicy(const std::filesystem::path& path, int num_obs, int num_actions);
+    OnnxPolicy(const std::filesystem::path& path, int num_obs, int num_actions, const std::string& provider, int cuda_device_id);
 
     std::vector<float> run(const std::vector<float>& obs);
     void reset();

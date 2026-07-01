@@ -35,11 +35,9 @@ struct RemoteState {
 };
 
 struct RuntimeOptions {
-    std::array<float, 3> command{0.0f, 0.0f, 0.0f};
     std::string connection_override;
     bool dry_run = false;
     bool print_state = false;
-    bool print_remote = false;
 };
 
 class Go1Controller {
@@ -74,8 +72,7 @@ private:
     std::array<float, 12> current_joint_positions() const;
     void fill_servo_cmd(const std::array<float, 12>& q, const std::array<float, 12>& kp, const std::array<float, 12>& kd);
     std::vector<float> build_observation() const;
-    void print_current_state() const;
-    void print_remote_bytes() const;
+    void print_current_state();
 
     DeployConfig config_;
     RuntimeOptions options_;
@@ -87,6 +84,7 @@ private:
     ucl::lowState low_state_;
     RemoteState remote_;
     std::array<float, 3> command_{};
+    std::array<float, 3> keyboard_command_{};
     std::array<float, 12> last_action_{};
     std::array<float, 12> move_start_q_{};
     std::array<float, 12> policy_target_q_{};
@@ -96,6 +94,13 @@ private:
     std::chrono::steady_clock::time_point state_enter_time_{};
     std::chrono::steady_clock::time_point next_policy_time_{};
     std::chrono::steady_clock::time_point next_debug_print_time_{};
+    std::chrono::steady_clock::time_point last_debug_stats_time_{};
+    std::size_t received_state_packets_total_ = 0;
+    std::size_t sent_cmd_packets_total_ = 0;
+    std::size_t policy_runs_total_ = 0;
+    std::size_t last_debug_state_packets_ = 0;
+    std::size_t last_debug_cmd_packets_ = 0;
+    std::size_t last_debug_policy_runs_ = 0;
     int exit_damping_ticks_ = 0;
 };
 

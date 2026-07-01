@@ -1,13 +1,26 @@
 initial_policy: up
+policy_provider: cpu
+cuda_device_id: 0
 policies:
-  up: "{LEGGED_GYM_ROOT_DIR}/deploy/pre_train/go1/go1_policy_up.onnx"
-  down: "{LEGGED_GYM_ROOT_DIR}/deploy/pre_train/go1/go1_policy_down.onnx"
-  left: "{LEGGED_GYM_ROOT_DIR}/deploy/pre_train/go1/go1_policy_left.onnx"
-  right: "{LEGGED_GYM_ROOT_DIR}/deploy/pre_train/go1/go1_policy_right.onnx"
-fsm_dt: 0.002
+  up: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real_go1_cpp/model/policy.onnx"
+  down: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real_go1_cpp/model/policy.onnx"
+  left: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real_go1_cpp/model/policy.onnx"
+  right: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real_go1_cpp/model/policy.onnx"
+fsm_dt: 0.001
 control_dt: 0.02
 sdk_mode: "low"
 connection: "low_wifi"
+connections:
+  low_wifi:
+    robot_ip: "192.168.123.10"
+    local_ip: "192.168.0.33"
+    listen_port: 8090
+    send_port: 8007
+  low_wired:
+    robot_ip: "192.168.123.10"
+    local_ip: "192.168.123.163"
+    listen_port: 8090
+    send_port: 8007
 
 joint2motor_idx: [3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8]
 default_angles: [0.1, 0.8, -1.5,
@@ -25,11 +38,13 @@ obs_scales_dof_pos: 1.0
 obs_scales_dof_vel: 0.05
 command_scale: [2.0, 2.0, 0.25]
 action_scale: 0.25
+clip_observations: 100.0
+clip_actions: 100.0
 num_obs: 45
 num_actions: 12
 
 state_timeout_s: 0.1
 move_to_default_s: 2.0
 remote_enabled: true
-remote_cmd_enabled: true
 remote_deadzone: 0.05
+command_source: remote

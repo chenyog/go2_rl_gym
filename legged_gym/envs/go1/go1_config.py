@@ -39,7 +39,7 @@ class GO1Cfg(GO2Cfg):
         action_scale = 0.25
 
     class rewards(GO2Cfg.rewards):
-        base_height_target = 0.42
+        base_height_target = 0.38
 
     class asset(GO2Cfg.asset):
         file = "{LEGGED_GYM_ROOT_DIR}/resources/robots/go1/urdf/go1.urdf"
@@ -47,6 +47,7 @@ class GO1Cfg(GO2Cfg):
         foot_name = "foot"
         penalize_contacts_on = ["thigh", "calf"]
         terminate_after_contacts_on = ["base"]
+        self_collisions = 1  # 1 to disable, 0 to enable...bitwise filter
 
 
 class GO1CfgPPO(GO2CfgPPO):
