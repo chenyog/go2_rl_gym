@@ -2,10 +2,10 @@ initial_policy: up
 policy_provider: cpu
 cuda_device_id: 0
 policies:
-  up: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real_go1_cpp/model/policy.onnx"
-  down: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real_go1_cpp/model/policy.onnx"
-  left: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real_go1_cpp/model/policy.onnx"
-  right: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real_go1_cpp/model/policy.onnx"
+  up: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real_go1_cpp/model/moe_cts_150k.onnx"
+  down: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real_go1_cpp/model/moe_cts_150k.onnx"
+  left: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real_go1_cpp/model/moe_cts_150k.onnx"
+  right: "{LEGGED_GYM_ROOT_DIR}/deploy/deploy_real_go1_cpp/model/moe_cts_150k.onnx"
 fsm_dt: 0.001
 control_dt: 0.02
 sdk_mode: "low"

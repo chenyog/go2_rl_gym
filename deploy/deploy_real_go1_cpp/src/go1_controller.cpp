@@ -472,7 +472,7 @@ void Go1Controller::handle_keyboard(char key) {
         break;
     case 's':
     case 'S':
-        if (state_ == ControllerState::Passive || state_ == ControllerState::DefaultStand) {
+        if (state_ == ControllerState::Passive || state_ == ControllerState::DefaultStand || state_ == ControllerState::PolicyRun) {
             transition_to(ControllerState::MoveToDefault);
         } else {
             std::cout << "Ignoring 's' in state " << state_name(state_) << ".\n";
@@ -508,22 +508,26 @@ void Go1Controller::handle_remote() {
     if (!config_.remote_enabled) {
         return;
     }
-    auto on = [&](int key) {
-        return remote_.buttons[static_cast<std::size_t>(key)] &&
-               !remote_.last_buttons[static_cast<std::size_t>(key)];
+    auto down = [&](int key) {
+        return remote_.buttons[static_cast<std::size_t>(key)] != 0;
     };
-    if (on(kSelect)) {
+    auto combo = [&](int a, int b) {
+        return down(a) && down(b) &&
+               !(remote_.last_buttons[static_cast<std::size_t>(a)] &&
+                 remote_.last_buttons[static_cast<std::size_t>(b)]);
+    };
+    if (combo(kSelect, kSelect)) {
         transition_to(ControllerState::ExitDamping);
         return;
-    } else if (remote_.buttons[kL2] && on(kA) && state_ == ControllerState::Passive) {
+    } else if (combo(kL2, kA) && (state_ == ControllerState::Passive || state_ == ControllerState::PolicyRun)) {
         transition_to(ControllerState::MoveToDefault);
-    } else if (remote_.buttons[kL2] && on(kB)) {
+    } else if (combo(kL2, kB)) {
         transition_to(ControllerState::Passive);
     }
 
     const std::pair<int, const char*> slots[] = {{kUp, "up"}, {kDown, "down"}, {kLeft, "left"}, {kRight, "right"}};
     for (const auto& slot : slots) {
-        if (remote_.buttons[kStart] && on(slot.first)) {
+        if (combo(kStart, slot.first)) {
             switch_policy(slot.second);
             if (state_ == ControllerState::DefaultStand || state_ == ControllerState::PolicyRun) {
                 transition_to(ControllerState::PolicyRun);
